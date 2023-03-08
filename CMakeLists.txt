@@ -34,6 +34,9 @@ option(LEVELDB_BUILD_TESTS "Build LevelDB's unit tests" ON)
 option(LEVELDB_BUILD_BENCHMARKS "Build LevelDB's benchmarks" ON)
 option(LEVELDB_INSTALL "Install LevelDB's header and library" ON)
 
+include_directories("/usr/local/include")
+link_directories("/usr/local/lib")
+
 include(CheckIncludeFile)
 check_include_file("unistd.h" HAVE_UNISTD_H)
 
@@ -443,7 +446,7 @@ if(LEVELDB_BUILD_BENCHMARKS)
     target_link_libraries(db_bench_sqlite3 sqlite3)
   endif(HAVE_SQLITE3)
 
-  check_library_exists(lmdb mdb_env_open "" HAVE_LMDB)
+  check_library_exists(lmdb mdb_env_open "/usr/local/lib" HAVE_LMDB)
   if(HAVE_LMDB)
     leveldb_benchmark("benchmarks/db_bench_lmdb.cc")
 	target_link_libraries(db_bench_lmdb lmdb)

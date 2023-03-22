@@ -86,6 +86,10 @@ static bool FLAGS_metasync = true;
 // If true, use writable mmap
 static bool FLAGS_writemap = true;
 
+// If true, mmap data pages are fsync'd.
+// Sets MDB_NOSYNC environment option
+static bool FLAGS_sync = true;
+
 // Use the db with the following name.
 static const char* FLAGS_db = NULL;
 
@@ -452,7 +456,7 @@ class Benchmark {
 	system(cmd);
 
 	int env_opt = 0;
-	if (flags != SYNC)
+	if (flags != SYNC || !FLAGS_sync)
 		env_opt = MDB_NOSYNC;
 	else if (!FLAGS_metasync)
 		env_opt = MDB_NOMETASYNC;
@@ -614,7 +618,10 @@ int main(int argc, char** argv) {
     } else if (sscanf(argv[i], "--writemap=%d%c", &n, &junk) == 1 &&
                (n == 0 || n == 1)) {
       FLAGS_writemap = n;
-    } else if (sscanf(argv[i], "--num=%d%c", &n, &junk) == 1) {
+    } else if (sscanf(argv[i], "--sync=%d%c", &n, &junk) == 1 &&
+			   (n == 0 || n == 1)) {
+	  FLAGS_sync = n;
+	} else if (sscanf(argv[i], "--num=%d%c", &n, &junk) == 1) {
       FLAGS_num = n;
     } else if (sscanf(argv[i], "--batch=%d%c", &n, &junk) == 1) {
       FLAGS_batch = n;

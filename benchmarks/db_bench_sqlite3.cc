@@ -464,6 +464,10 @@ class Benchmark {
       status =
           sqlite3_exec(db_, WAL_checkpoint.c_str(), nullptr, nullptr, &err_msg);
       ExecErrorCheck(status, err_msg);
+    } else {
+      std::string WAL_stmt = "PRAGMA journal_mode = OFF";
+      status = sqlite3_exec(db_, WAL_stmt.c_str(), nullptr, nullptr, &err_msg);
+      ExecErrorCheck(status, err_msg);
     }
 
     // Change locking mode to exclusive and create tables/index for database

@@ -440,7 +440,7 @@ if(LEVELDB_BUILD_BENCHMARKS)
     leveldb_benchmark("benchmarks/db_bench.cc")
   endif(NOT BUILD_SHARED_LIBS)
 
-  check_library_exists(sqlite3 sqlite3_open "" HAVE_SQLITE3)
+  check_library_exists(sqlite3 sqlite3_open "/usr/local/lib" HAVE_SQLITE3)
   if(HAVE_SQLITE3)
     leveldb_benchmark("benchmarks/db_bench_sqlite3.cc")
     target_link_libraries(db_bench_sqlite3 sqlite3)

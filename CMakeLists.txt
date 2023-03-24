@@ -440,17 +440,17 @@ if(LEVELDB_BUILD_BENCHMARKS)
     leveldb_benchmark("benchmarks/db_bench.cc")
   endif(NOT BUILD_SHARED_LIBS)
 
-  check_library_exists(sqlite3 sqlite3_open "/usr/local/lib" HAVE_SQLITE3)
-  if(HAVE_SQLITE3)
+  find_library(SQLITE3 sqlite3 PATHS "/usr/local/lib")
+  if(SQLITE3)
     leveldb_benchmark("benchmarks/db_bench_sqlite3.cc")
     target_link_libraries(db_bench_sqlite3 sqlite3)
-  endif(HAVE_SQLITE3)
+  endif(SQLITE3)
 
-  check_library_exists(lmdb mdb_env_open "/usr/local/lib" HAVE_LMDB)
-  if(HAVE_LMDB)
+  find_library(LMDB lmdb PATHS "/usr/local/lib")
+  if(LMDB)
     leveldb_benchmark("benchmarks/db_bench_lmdb.cc")
 	target_link_libraries(db_bench_lmdb lmdb)
-  endif(HAVE_LMDB)
+  endif(LMDB)
 
   # check_library_exists is insufficient here because the library names have
   # different manglings when compiled with clang or gcc, at least when installed

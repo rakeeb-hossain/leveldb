@@ -10,6 +10,7 @@
 #include "util/histogram.h"
 #include "util/random.h"
 #include "util/testutil.h"
+#include <sys/mman.h>
 
 // Comma-separated list of operations to run in the specified order
 //   Actual benchmarks:
@@ -81,6 +82,12 @@ static bool FLAGS_WAL_enabled = true;
 
 // Use the db with the following name.
 static const char* FLAGS_db = nullptr;
+
+// Use an anonymous mmap to back the page cache instead of a file
+static bool FLAGS_mmap = false;
+static void* mmap_addr = nullptr;
+const int MMAP_SIZE_BYTES = 2147483647;
+const char* AURVFS_LIB_PATH = "/usr/local/lib/auroravfs";
 
 inline static void ExecErrorCheck(int status, char* err_msg) {
   if (status != SQLITE_OK) {
@@ -345,6 +352,35 @@ class Benchmark {
 
   void Run() {
     PrintHeader();
+
+	// Init mmap if necessary and do extension setup
+	if (FLAGS_mmap) {
+		mmap_addr = mmap(NULL, MMAP_SIZE_BYTES, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+		if (mmap_addr == nullptr) {
+			std::fprintf(stderr, "mmap error");
+			std::exit(1);
+		}
+	
+		sqlite3 *db; 
+ 		int rc = sqlite3_open(":memory:", &db); 
+ 		if (rc != 0) { 
+			std::fprintf(stderr, "open err: %d", rc); 
+			std::exit(1);
+ 		} 
+   
+ 		rc = sqlite3_enable_load_extension(db, 1);
+		if (rc != 0) {
+			std::fprintf(stderr, "failed to enable extensions: %d", rc);
+			std::exit(1);
+		}
+
+		rc = sqlite3_load_extension(db, AURVFS_LIB_PATH, 0, 0);
+		if (rc != 0) {
+			std::fprintf(stderr, "failed to load aurvfs extension at %s: %d", AURVFS_LIB_PATH, rc);
+			std::exit(1);
+		}
+		sqlite3_close(db);
+	}
     Open();
 
     const char* benchmarks = FLAGS_benchmarks;
@@ -429,13 +465,23 @@ class Benchmark {
     // Open database
     std::string tmp_dir;
     Env::Default()->GetTestDirectory(&tmp_dir);
-    std::snprintf(file_name, sizeof(file_name), "%s/dbbench_sqlite3-%d.db",
-                  tmp_dir.c_str(), db_num_);
-    status = sqlite3_open(file_name, &db_);
-    if (status) {
-      std::fprintf(stderr, "open error: %s\n", sqlite3_errmsg(db_));
-      std::exit(1);
-    }
+	if (FLAGS_mmap) {
+		std::snprintf(file_name, sizeof(file_name), "file:%s/dbbench_sqlite3-%d.db?ptr=%p&sz=%d&max=%d", tmp_dir.c_str(), db_num_, mmap_addr, 0, MMAP_SIZE_BYTES);
+
+		status = sqlite3_open_v2(file_name, &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI, "auroravfs");
+		if (status) {
+			std::fprintf(stderr, "open error: %s\n", sqlite3_errmsg(db_));
+			std::exit(1);
+		}
+	} else {
+		std::snprintf(file_name, sizeof(file_name), "%s/dbbench_sqlite3-%d.db",
+					  tmp_dir.c_str(), db_num_);
+		status = sqlite3_open(file_name, &db_);
+		if (status) {
+		  std::fprintf(stderr, "open error: %s\n", sqlite3_errmsg(db_));
+		  std::exit(1);
+		}
+	}
 
     // Change SQLite cache size
     char cache_size[100];
@@ -453,12 +499,13 @@ class Benchmark {
       ExecErrorCheck(status, err_msg);
     }
 
+
     // Change journal mode to WAL if WAL enabled flag is on
     if (FLAGS_WAL_enabled) {
       std::string WAL_stmt = "PRAGMA journal_mode = WAL";
 
       // LevelDB's default cache size is a combined 4 MB
-      std::string WAL_checkpoint = "PRAGMA wal_autocheckpoint = 4096";
+      std::string WAL_checkpoint = "PRAGMA wal_autocheckpoint = 1024";
       status = sqlite3_exec(db_, WAL_stmt.c_str(), nullptr, nullptr, &err_msg);
       ExecErrorCheck(status, err_msg);
       status =
@@ -706,10 +753,13 @@ int main(int argc, char** argv) {
       FLAGS_page_size = n;
     } else if (sscanf(argv[i], "--num_pages=%d%c", &n, &junk) == 1) {
       FLAGS_num_pages = n;
+    } else if (sscanf(argv[i], "--mmap_enabled=%d%c", &n, &junk) == 1 &&
+               (n == 0 || n == 1)) {
+		FLAGS_mmap = n;
     } else if (sscanf(argv[i], "--WAL_enabled=%d%c", &n, &junk) == 1 &&
                (n == 0 || n == 1)) {
       FLAGS_WAL_enabled = n;
-    } else if (strncmp(argv[i], "--db=", 5) == 0) {
+    } else if (sscanf(argv[i], "--db=", 5) == 0) {
       FLAGS_db = argv[i] + 5;
     } else {
       std::fprintf(stderr, "Invalid flag '%s'\n", argv[i]);

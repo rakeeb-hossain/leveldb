@@ -12,6 +12,8 @@
 #include "util/testutil.h"
 #include <sys/mman.h>
 
+#include <sls.h>
+
 // Comma-separated list of operations to run in the specified order
 //   Actual benchmarks:
 //
@@ -86,8 +88,13 @@ static const char* FLAGS_db = nullptr;
 // Use an anonymous mmap to back the page cache instead of a file
 static bool FLAGS_mmap = false;
 static void* mmap_addr = nullptr;
+unsigned int curr_oid = 150;
+
 const int MMAP_SIZE_BYTES = 2147483647;
 const char* AURVFS_LIB_PATH = "/usr/local/lib/auroravfs";
+
+unsigned int FLAGS_WAL_size = 1024;
+
 
 inline static void ExecErrorCheck(int status, char* err_msg) {
   if (status != SQLITE_OK) {
@@ -466,7 +473,38 @@ class Benchmark {
     std::string tmp_dir;
     Env::Default()->GetTestDirectory(&tmp_dir);
 	if (FLAGS_mmap) {
-		std::snprintf(file_name, sizeof(file_name), "file:%s/dbbench_sqlite3-%d.db?ptr=%p&sz=%d&max=%d", tmp_dir.c_str(), db_num_, mmap_addr, 0, MMAP_SIZE_BYTES);
+		// Setup Aurora partition
+		curr_oid += 1;
+		int error;
+
+		// Clean up previous partitions
+		/*
+		error = sls_partdel(curr_oid);
+		if (error != 0 && error != EINVAL) {
+			std::fprintf(stderr, "sls_partdel error %d\n", error);
+			exit(1);
+		}
+		*/
+
+		/*
+		struct sls_attr attr = (struct sls_attr) {
+			.attr_target = SLS_OSD,
+			.attr_mode = SLS_DELTA,
+			.attr_period = 0,
+			.attr_flags = SLSATTR_IGNUNLINKED,
+			.attr_amplification = 1,
+		};
+
+		error = sls_partadd(curr_oid, attr, -1);
+		if (error != 0) {
+			std::fprintf(stderr, "sls_partadd error %d\n", error);
+			exit(1);
+		}
+		*/
+		
+
+		// Construct filename with params and open
+		std::snprintf(file_name, sizeof(file_name), "file:%s/dbbench_sqlite3-%d.db?ptr=%p&sz=%d&max=%d&oid=%d", tmp_dir.c_str(), db_num_, mmap_addr, 0, MMAP_SIZE_BYTES, curr_oid);
 
 		status = sqlite3_open_v2(file_name, &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI, "auroravfs");
 		if (status) {
@@ -505,7 +543,7 @@ class Benchmark {
       std::string WAL_stmt = "PRAGMA journal_mode = WAL";
 
       // LevelDB's default cache size is a combined 4 MB
-      std::string WAL_checkpoint = "PRAGMA wal_autocheckpoint = 1024";
+      std::string WAL_checkpoint = "PRAGMA wal_autocheckpoint = " + std::to_string(FLAGS_WAL_size);
       status = sqlite3_exec(db_, WAL_stmt.c_str(), nullptr, nullptr, &err_msg);
       ExecErrorCheck(status, err_msg);
       status =
@@ -759,7 +797,9 @@ int main(int argc, char** argv) {
     } else if (sscanf(argv[i], "--WAL_enabled=%d%c", &n, &junk) == 1 &&
                (n == 0 || n == 1)) {
       FLAGS_WAL_enabled = n;
-    } else if (sscanf(argv[i], "--db=", 5) == 0) {
+    } else if (sscanf(argv[i], "--WAL_size=%d%c", &n, &junk) == 1) {
+      FLAGS_WAL_size = n;
+	} else if (sscanf(argv[i], "--db=", 5) == 0) {
       FLAGS_db = argv[i] + 5;
     } else {
       std::fprintf(stderr, "Invalid flag '%s'\n", argv[i]);

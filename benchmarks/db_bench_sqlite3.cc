@@ -95,6 +95,7 @@ const char* AURVFS_LIB_PATH = "/usr/local/lib/auroravfs";
 
 unsigned int FLAGS_WAL_size = 1024;
 
+static int FLAGS_read_percent = 50;
 
 inline static void ExecErrorCheck(int status, char* err_msg) {
   if (status != SQLITE_OK) {
@@ -500,7 +501,13 @@ class Benchmark {
         reads_ /= 1000;
         Read(RANDOM, 1);
         reads_ = n;
-      } else {
+      } else if (name == Slice("readwriterand")) {
+		write_sync = true;
+		ReadWrite(write_sync, RANDOM, num_, FLAGS_value_size, 100);
+	  } else if (name == Slice("readwriterand")) {
+		write_sync = true;
+		ReadWrite(write_sync, SEQUENTIAL, num_, FLAGS_value_size, 100);
+	  } else {
         known = false;
         if (name != Slice()) {  // No error message for empty name
           std::fprintf(stderr, "unknown benchmark '%s'\n",
@@ -776,6 +783,122 @@ class Benchmark {
     }
 
     status = sqlite3_finalize(pStmt);
+    ErrorCheck(status);
+  }
+
+  void ReadWrite(bool write_sync, Order order, int num_entries, int value_size, int entries_per_batch) {
+	int status;
+	
+    sqlite3_stmt *replace_stmt, *read_stmt, *begin_trans_stmt, *end_trans_stmt;
+    std::string replace_str = "REPLACE INTO test (key, value) VALUES (?, ?)";
+	std::string read_str = "SELECT * FROM test WHERE key = ?";
+    std::string begin_trans_str = "BEGIN TRANSACTION;";
+    std::string end_trans_str = "END TRANSACTION;";
+
+    // Check for synchronous flag in options
+    std::string sync_stmt =
+        (write_sync) ? "PRAGMA synchronous = FULL" : "PRAGMA synchronous = OFF";
+    status = sqlite3_exec(db_, sync_stmt.c_str(), nullptr, nullptr, &err_msg);
+    ExecErrorCheck(status, err_msg);
+
+    // Preparing sqlite3 statements
+    status = sqlite3_prepare_v2(db_, replace_str.c_str(), -1, &replace_stmt,
+                                nullptr);
+    ErrorCheck(status);
+    status = sqlite3_prepare_v2(db_, read_str.c_str(), -1, &read_stmt_stmt,
+                                nullptr);
+    ErrorCheck(status);
+    status = sqlite3_prepare_v2(db_, begin_trans_str.c_str(), -1,
+                                &begin_trans_stmt, nullptr);
+    ErrorCheck(status);
+    status = sqlite3_prepare_v2(db_, end_trans_str.c_str(), -1, &end_trans_stmt,
+                                nullptr);
+    ErrorCheck(status);
+
+	bool transaction = (entries_per_batch > 1);
+	for (int i = 0; i < num_entries; i += entries_per_batch) {
+		if (FLAGS_transaction && transaction) {
+			status = sqlite3_step(begin_trans_stmt);
+			StepErrorCheck(status);
+			status = sqlite3_reset(begin_trans_stmt);
+			ErrorCheck(status);
+		}
+		
+		// Decide on write or read
+		int roll = (rand_.Next() % 100);
+		if (roll <= FLAGS_read_percent) {
+			is_read = true;
+		}
+
+		for (int j = 0; j < entries_per_batch; j++) {
+			if (is_read) {
+				// Create key value
+				char key[100];
+				int k = (order == SEQUENTIAL) ? i + j : (rand_.Next() % reads_);
+				std::snprintf(key, sizeof(key), "%016d", k);
+
+				// Bind key value into read_stmt
+				status = sqlite3_bind_blob(read_stmt, 1, key, 16, SQLITE_STATIC);
+				ErrorCheck(status);
+
+				// Execute read statement
+				while ((status = sqlite3_step(read_stmt)) == SQLITE_ROW) {
+				}
+				StepErrorCheck(status);
+
+				// Reset SQLite statement for another use
+				status = sqlite3_clear_bindings(read_stmt);
+				ErrorCheck(status);
+				status = sqlite3_reset(read_stmt);
+				ErrorCheck(status);
+				FinishedSingleOp()
+			} else {
+				const char* value = gen_.Generate(value_size).data();
+
+				// Create values for key-value pair
+				const int k =
+					(order == SEQUENTIAL) ? i + j : (rand_.Next() % num_entries);
+				char key[100];
+				std::snprintf(key, sizeof(key), "%016d", k);
+
+				// Bind KV values into replace_stmt
+				status = sqlite3_bind_blob(replace_stmt, 1, key, 16, SQLITE_STATIC);
+				ErrorCheck(status);
+				status = sqlite3_bind_blob(replace_stmt, 2, value, value_size,
+										   SQLITE_STATIC);
+				ErrorCheck(status);
+
+				// Execute replace_stmt
+				bytes_ += value_size + strlen(key);
+				status = sqlite3_step(replace_stmt);
+				StepErrorCheck(status);
+
+				// Reset SQLite statement for another use
+				status = sqlite3_clear_bindings(replace_stmt);
+				ErrorCheck(status);
+				status = sqlite3_reset(replace_stmt);
+				ErrorCheck(status);
+
+				FinishedSingleOp();
+			}
+		}
+
+		// End transaction
+		if (FLAGS_transaction && transaction) {
+			status = sqlite3_step(end_trans_stmt);
+			StepErrorCheck(status);
+			status = sqlite3_reset(end_trans_stmt);
+			ErrorCheck(status);
+		}
+	}
+
+	status = sqlite3_finalize(replace_stmt);
+    ErrorCheck(status);
+	status = sqlite3_finalize(read_stmt);
+    ErrorCheck(status);
+    status = sqlite3_finalize(begin_trans_stmt);
+    ErrorCheck(status);
+    status = sqlite3_finalize(end_trans_stmt);
     ErrorCheck(status);
   }
 };

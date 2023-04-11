@@ -443,10 +443,9 @@ if(LEVELDB_BUILD_BENCHMARKS)
   endif(NOT BUILD_SHARED_LIBS)
 
   find_library(SQLITE3 sqlite3 PATHS "/usr/local/lib")
-  find_library(SLS sls PATHS "/usr/local/lib" "/usr/lib")
-  if(SQLITE3 AND SLS)
+  if(SQLITE3)
     leveldb_benchmark("benchmarks/db_bench_sqlite3.cc")
-    target_link_libraries(db_bench_sqlite3 sqlite3 sls)
+    target_link_libraries(db_bench_sqlite3 sqlite3)
   endif()
 
   find_library(LMDB lmdb PATHS "/usr/local/lib")

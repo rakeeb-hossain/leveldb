@@ -11,8 +11,7 @@
 #include "util/random.h"
 #include "util/testutil.h"
 #include <sys/mman.h>
-
-#include <sls.h>
+#include <fcntl.h>
 
 // Comma-separated list of operations to run in the specified order
 //   Actual benchmarks:
@@ -362,62 +361,6 @@ class Benchmark {
 
 	// Init mmap if necessary and do extension setup
 	if (FLAGS_mmap) {
-		// Setup Aurora partition
-		int error;
-
-		// Clean up previous partitions
-		/*
-		error = sls_partdel(curr_oid);
-		if (error != 0 && error != EINVAL) {
-			std::fprintf(stderr, "sls_partdel error %d\n", error);
-			exit(1);
-		}
-		*/
-
-		struct sls_attr attr = (struct sls_attr) {
-			.attr_target = SLS_OSD,
-			.attr_mode = SLS_DELTA,
-			.attr_period = 0,
-			.attr_flags = SLSATTR_IGNUNLINKED,
-			.attr_amplification = 1,
-		};
-
-		error = sls_partadd(curr_oid, attr, -1);
-		if (error != 0) {
-			std::fprintf(stderr, "sls_partadd error %d\n", error);
-			exit(1);
-		}
-
-		error = sls_attach(curr_oid, getpid());
-		if (error != 0) {
-			std::fprintf(stderr, "sls_attach error %d\n", error);
-			exit(1);
-		}
-		
-		// Ckpt
-		error = sls_checkpoint(curr_oid, true);
-		if (error != 0) {
-			std::fprintf(stderr, "sls_ckpt error %d\n", error);
-			exit(1);
-		}
-
-		sleep(3);
-
-		// Setup mmap
-		mmap_addr = mmap(NULL, MMAP_SIZE_BYTES, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
-		if (mmap_addr == MAP_FAILED) {
-			std::fprintf(stderr, "mmap error");
-			std::exit(1);
-		}
-		*(char*)mmap_addr = '1'; // Hack to make sure that this VM object gets tracked
-
-		// Try and memsnap mmap?
-		error = sls_memsnap(curr_oid, mmap_addr);
-		if (error != 0) {
-			std::fprintf(stderr, "sls_memsnap error %d\n", error);
-			exit(1);
-		}
-	
 		// Load AurVFS extension
 		sqlite3 *db; 
  		int rc = sqlite3_open(":memory:", &db); 
@@ -525,9 +468,25 @@ class Benchmark {
     std::string tmp_dir;
     Env::Default()->GetTestDirectory(&tmp_dir);
 	if (FLAGS_mmap) {
+		// Setup mmap
+		char mmap_name[1024];
+		std::snprintf(mmap_name, sizeof(mmap_name), "%s/mmap-%d", tmp_dir.c_str(), db_num_);
+		int fd = open(mmap_name, O_CREAT | O_RDWR | O_TRUNC, S_IRWXU);
+		status = ftruncate(fd, MMAP_SIZE_BYTES);
+		if (status < 0) {
+			std::fprintf(stderr, "trunc error");
+			std::exit(1);
+		}
+		mmap_addr = mmap(0, MMAP_SIZE_BYTES, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		if (mmap_addr == MAP_FAILED) {
+			std::fprintf(stderr, "mmap error");
+			std::exit(1);
+		}
+		((char*)mmap_addr)[0] = '1';
+		
 		// Construct filename with params and open
 		std::snprintf(file_name, sizeof(file_name), "file:%s/dbbench_sqlite3-%d.db?ptr=%p&sz=%d&max=%d&oid=%d", tmp_dir.c_str(), db_num_, mmap_addr, 0, MMAP_SIZE_BYTES, curr_oid);
-
+	
 		status = sqlite3_open_v2(file_name, &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI, "auroravfs");
 		if (status) {
 			std::fprintf(stderr, "open error: %s\n", sqlite3_errmsg(db_));

@@ -366,15 +366,6 @@ class Benchmark {
 		// Setup Aurora partition
 		int error;
 
-		// Clean up previous partitions
-		/*
-		error = sls_partdel(curr_oid);
-		if (error != 0 && error != EINVAL) {
-			std::fprintf(stderr, "sls_partdel error %d\n", error);
-			exit(1);
-		}
-		*/
-
 		struct sls_attr attr = (struct sls_attr) {
 			.attr_target = SLS_OSD,
 			.attr_mode = SLS_DELTA,
@@ -402,23 +393,8 @@ class Benchmark {
 			exit(1);
 		}
 
-		sleep(3);
+		sleep(2);
 
-		// Setup mmap
-		mmap_addr = mmap(NULL, MMAP_SIZE_BYTES, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
-		if (mmap_addr == MAP_FAILED) {
-			std::fprintf(stderr, "mmap error");
-			std::exit(1);
-		}
-		*(char*)mmap_addr = '1'; // Hack to make sure that this VM object gets tracked
-
-		// Try and memsnap mmap?
-		error = sls_memsnap(curr_oid, mmap_addr);
-		if (error != 0) {
-			std::fprintf(stderr, "sls_memsnap error %d\n", error);
-			exit(1);
-		}
-	
 		// Load AurVFS extension
 		sqlite3 *db; 
  		int rc = sqlite3_open(":memory:", &db); 
@@ -468,7 +444,7 @@ class Benchmark {
         WalCheckpoint(db_);
       } else if (name == Slice("fillrandom")) {
         Write(write_sync, RANDOM, FRESH, num_, FLAGS_value_size, 1);
-        WalCheckpoint(db_);
+        //WalCheckpoint(db_);
       } else if (name == Slice("fillrandbatch")) {
         Write(write_sync, RANDOM, FRESH, num_, FLAGS_value_size, 1000);
         WalCheckpoint(db_);
@@ -501,10 +477,12 @@ class Benchmark {
         reads_ /= 1000;
         Read(RANDOM, 1);
         reads_ = n;
-      } else if (name == Slice("readwriterand")) {
+      } else if (name == Slice("backfill")) {
+		Write(write_sync, RANDOM, FRESH, num_, FLAGS_value_size, 1000);
+	  } else if (name == Slice("readwriterand")) {
 		write_sync = true;
 		ReadWrite(write_sync, RANDOM, num_, FLAGS_value_size, 100);
-	  } else if (name == Slice("readwriterand")) {
+	  } else if (name == Slice("readwriteseq")) {
 		write_sync = true;
 		ReadWrite(write_sync, SEQUENTIAL, num_, FLAGS_value_size, 100);
 	  } else {
@@ -532,6 +510,14 @@ class Benchmark {
     std::string tmp_dir;
     Env::Default()->GetTestDirectory(&tmp_dir);
 	if (FLAGS_mmap) {
+		// Setup mmap
+		mmap_addr = mmap(NULL, MMAP_SIZE_BYTES, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+		if (mmap_addr == MAP_FAILED) {
+			std::fprintf(stderr, "mmap error");
+			std::exit(1);
+		}
+		*(char*)mmap_addr = '1'; // Hack to make sure that this VM object gets tracked
+
 		// Construct filename with params and open
 		std::snprintf(file_name, sizeof(file_name), "file:%s/dbbench_sqlite3-%d.db?ptr=%p&sz=%d&max=%d&oid=%d", tmp_dir.c_str(), db_num_, mmap_addr, 0, MMAP_SIZE_BYTES, curr_oid);
 
@@ -787,7 +773,11 @@ class Benchmark {
   }
 
   void ReadWrite(bool write_sync, Order order, int num_entries, int value_size, int entries_per_batch) {
+	// Backfill DB first
+    // Write(write_sync, SEQUENTIAL, FRESH, num_, 100, 1000);
+
 	int status;
+    char* err_msg = nullptr;
 	
     sqlite3_stmt *replace_stmt, *read_stmt, *begin_trans_stmt, *end_trans_stmt;
     std::string replace_str = "REPLACE INTO test (key, value) VALUES (?, ?)";
@@ -805,7 +795,7 @@ class Benchmark {
     status = sqlite3_prepare_v2(db_, replace_str.c_str(), -1, &replace_stmt,
                                 nullptr);
     ErrorCheck(status);
-    status = sqlite3_prepare_v2(db_, read_str.c_str(), -1, &read_stmt_stmt,
+    status = sqlite3_prepare_v2(db_, read_str.c_str(), -1, &read_stmt,
                                 nullptr);
     ErrorCheck(status);
     status = sqlite3_prepare_v2(db_, begin_trans_str.c_str(), -1,
@@ -825,8 +815,9 @@ class Benchmark {
 		}
 		
 		// Decide on write or read
+		bool is_read = false;
 		int roll = (rand_.Next() % 100);
-		if (roll <= FLAGS_read_percent) {
+		if (roll <= FLAGS_read_percent && roll > 0) {
 			is_read = true;
 		}
 
@@ -851,7 +842,7 @@ class Benchmark {
 				ErrorCheck(status);
 				status = sqlite3_reset(read_stmt);
 				ErrorCheck(status);
-				FinishedSingleOp()
+				FinishedSingleOp();
 			} else {
 				const char* value = gen_.Generate(value_size).data();
 
@@ -942,11 +933,17 @@ int main(int argc, char** argv) {
     } else if (sscanf(argv[i], "--WAL_enabled=%d%c", &n, &junk) == 1 &&
                (n == 0 || n == 1)) {
       FLAGS_WAL_enabled = n;
+    } else if (sscanf(argv[i], "--read_percent=%d%c", &n, &junk) == 1) {
+		if (n < 0 || n > 100) {
+			std::fprintf(stderr, "read percent must be in [0, 100]");
+			std::exit(1);
+		}
+		FLAGS_read_percent = n;
     } else if (sscanf(argv[i], "--WAL_size=%d%c", &n, &junk) == 1) {
       FLAGS_WAL_size = n;
 	} else if (sscanf(argv[i], "--db=", 5) == 0) {
       FLAGS_db = argv[i] + 5;
-    } else {
+	} else {
       std::fprintf(stderr, "Invalid flag '%s'\n", argv[i]);
       std::exit(1);
     }

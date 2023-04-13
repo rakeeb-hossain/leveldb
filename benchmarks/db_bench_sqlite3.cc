@@ -395,6 +395,20 @@ class Benchmark {
 
 		sleep(2);
 
+		// Setup mmap
+		mmap_addr = mmap(NULL, MMAP_SIZE_BYTES, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+		if (mmap_addr == MAP_FAILED) {
+			std::fprintf(stderr, "mmap error");
+			std::exit(1);
+		}
+		*(char*)mmap_addr = '1'; // Hack to make sure that this VM object gets tracked
+
+		error = sls_memsnap(curr_oid, mmap_addr);
+		if (error != 0) {
+			std::fprintf(stderr, "sls_mem error %d\n", error);
+			exit(1);
+		}
+
 		// Load AurVFS extension
 		sqlite3 *db; 
  		int rc = sqlite3_open(":memory:", &db); 
@@ -415,7 +429,7 @@ class Benchmark {
 			std::exit(1);
 		}
 		sqlite3_close(db);
-
+		
 	}
     Open();
 
@@ -510,13 +524,6 @@ class Benchmark {
     std::string tmp_dir;
     Env::Default()->GetTestDirectory(&tmp_dir);
 	if (FLAGS_mmap) {
-		// Setup mmap
-		mmap_addr = mmap(NULL, MMAP_SIZE_BYTES, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
-		if (mmap_addr == MAP_FAILED) {
-			std::fprintf(stderr, "mmap error");
-			std::exit(1);
-		}
-		*(char*)mmap_addr = '1'; // Hack to make sure that this VM object gets tracked
 
 		// Construct filename with params and open
 		std::snprintf(file_name, sizeof(file_name), "file:%s/dbbench_sqlite3-%d.db?ptr=%p&sz=%d&max=%d&oid=%d", tmp_dir.c_str(), db_num_, mmap_addr, 0, MMAP_SIZE_BYTES, curr_oid);

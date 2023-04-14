@@ -447,6 +447,7 @@ if(LEVELDB_BUILD_BENCHMARKS)
   if(SQLITE3 AND SLS)
     leveldb_benchmark("benchmarks/db_bench_sqlite3.cc")
     target_link_libraries(db_bench_sqlite3 sqlite3 sls)
+	target_compile_options(db_bench_sqlite3 PUBLIC -g)
   endif()
 
   find_library(LMDB lmdb PATHS "/usr/local/lib")

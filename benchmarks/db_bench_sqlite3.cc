@@ -43,7 +43,10 @@ static const char* FLAGS_benchmarks =
     "fillrand100K,"
     "fillseq100K,"
     "readseq,"
-    "readrand100K,";
+    "readrand100K,"
+	"backfill,"
+	"readwriterand,"
+	"readwriteseq,";
 
 // Number of key/values to place in database
 static int FLAGS_num = 1000000;
@@ -445,6 +448,7 @@ class Benchmark {
         benchmarks = sep + 1;
       }
 
+	  int old_bytes = bytes_;
       bytes_ = 0;
       Start();
 
@@ -458,7 +462,7 @@ class Benchmark {
         WalCheckpoint(db_);
       } else if (name == Slice("fillrandom")) {
         Write(write_sync, RANDOM, FRESH, num_, FLAGS_value_size, 1);
-        //WalCheckpoint(db_);
+        WalCheckpoint(db_);
       } else if (name == Slice("fillrandbatch")) {
         Write(write_sync, RANDOM, FRESH, num_, FLAGS_value_size, 1000);
         WalCheckpoint(db_);
@@ -492,10 +496,11 @@ class Benchmark {
         Read(RANDOM, 1);
         reads_ = n;
       } else if (name == Slice("backfill")) {
-		Write(write_sync, RANDOM, FRESH, num_, FLAGS_value_size, 1000);
+		Write(write_sync, SEQUENTIAL, FRESH, num_, FLAGS_value_size, 1000);
 	  } else if (name == Slice("readwriterand")) {
+		bytes_ = old_bytes;
 		write_sync = true;
-		ReadWrite(write_sync, RANDOM, num_, FLAGS_value_size, 100);
+		ReadWrite(write_sync, RANDOM, num_, FLAGS_value_size, 1);
 	  } else if (name == Slice("readwriteseq")) {
 		write_sync = true;
 		ReadWrite(write_sync, SEQUENTIAL, num_, FLAGS_value_size, 100);
@@ -781,8 +786,6 @@ class Benchmark {
 
   void ReadWrite(bool write_sync, Order order, int num_entries, int value_size, int entries_per_batch) {
 	// Backfill DB first
-    // Write(write_sync, SEQUENTIAL, FRESH, num_, 100, 1000);
-
 	int status;
     char* err_msg = nullptr;
 	
@@ -840,6 +843,7 @@ class Benchmark {
 				ErrorCheck(status);
 
 				// Execute read statement
+				bytes_ += value_size + strlen(key);
 				while ((status = sqlite3_step(read_stmt)) == SQLITE_ROW) {
 				}
 				StepErrorCheck(status);
